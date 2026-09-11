@@ -1,0 +1,23 @@
+{
+  "name": "ghostty-font",
+  "version": "0.1.0",
+  "description": "Try monospace fonts in Ghostty live, compare two side by side, and rank them with Elo.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "ghostty-font": "bin/ghostty-font"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "test": "bun test"
+  },
+  "engines": {
+    "bun": ">=1.3"
+  },
+  "os": [
+    "darwin"
+  ]
+}

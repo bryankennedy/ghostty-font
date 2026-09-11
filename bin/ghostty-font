@@ -1,0 +1,735 @@
+#!/usr/bin/env bun
+// ghostty-font — try monospace fonts in Ghostty live, without editing the config.
+//
+// Your Ghostty config keeps the font you actually use and includes an optional
+// override file, ~/.config/ghostty/font.ghostty. This script writes that
+// override and tells Ghostty to reload, so every open window re-renders in the
+// new font within a second. Nothing it does touches the config itself: once a
+// font wins, put it in the config and `ghostty-font reset`.
+//
+// Usage:
+//   ghostty-font [search]        interactive list: type to filter by substring,
+//                                ↑↓/Tab cycle (live), Enter keeps, Esc cancels,
+//                                → marks A, → on a second font marks B and compares,
+//                                ^R ranks fonts in random duels
+//   ghostty-font rank            straight into ranking duels
+//   ghostty-font rank reset      forget every duel (a .bak copy is kept)
+//   ghostty-font compare <font> <font>   straight into A/B compare
+//   ghostty-font next | prev     cycle through the fonts
+//   ghostty-font set <font> [size]   <font> may be any unique substring ("plex")
+//   ghostty-font reset           delete the override; back to the config's font
+//   ghostty-font current
+//   ghostty-font list [search]   ranked by rating once there are duels
+//
+// Fonts come from `ghostty +list-fonts` (monospace families Ghostty can find),
+// plus JetBrains Mono, which Ghostty embeds and so never shows up in that list,
+// plus any installed UNFLAGGED font below.
+//
+// The interactive list is built in rather than handed to fzf: fzf runs its
+// focus hook synchronously, so holding an arrow key queued one Ghostty reload
+// per row and the font kept changing for seconds after the key came up. Here
+// the font is applied only once the cursor rests, and never two reloads at once.
+//
+// Compare mode narrows the choice to two fonts: Space flips between A and B and
+// nothing else. Esc goes back to the list with the font on screen kept as A, so
+// the next → sets up its challenger — winner stays, one pairing at a time.
+// Marking uses arrows because letters type into the search, and Ctrl-A/Ctrl-B
+// are the usual terminal multiplexer prefixes (tmux, screen, herdr).
+//
+// Rank mode is compare mode where the script picks the pair and remembers the
+// verdict, as Elo ratings (src/ranking.js).
+
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { loadBook, nextPair, saveBook, standings } from "../src/ranking.js";
+import { clip, clipStyled, paint } from "../src/text.js";
+
+const GHOSTTY = process.env.GHOSTTY_BIN || "/Applications/Ghostty.app/Contents/MacOS/ghostty";
+const CONFIG_DIR = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "ghostty");
+const CONFIG = join(CONFIG_DIR, "config");
+const OVERRIDE = join(CONFIG_DIR, "font.ghostty");
+const DUELS = join(process.env.XDG_STATE_HOME || join(homedir(), ".local/state"), "ghostty-font/duels.json");
+const EMBEDDED = "JetBrains Mono";
+// Monospace fonts that don't set the fixed-pitch flag, so `+list-fonts` skips
+// them. Listed only when installed.
+const UNFLAGGED = ["CommitMono"];
+// How long the cursor must rest on a font before the list applies it.
+const SETTLE_MS = 150;
+
+const USAGE = readFileSync(new URL(import.meta.url), "utf8")
+  .match(/\/\/ Usage:\n([\s\S]*?)\n\/\/\n/)[1]
+  .replace(/^\/\/ ?/gm, "");
+
+const LIST_KEYS =
+  "type to search · ↑↓ cycle · ^R rank · → mark A/B · ← clear mark · Enter keep · Esc cancel · ^U clear";
+const COMPARE_KEYS = "Space ↑↓ Tab flip · ← a show A · → b show B · Enter keep shown · Esc back";
+const RANK_KEYS =
+  "Space flip · ← a / → b show · Enter pick shown · = tie · s skip · x drop font · u undo · Esc ranked list";
+
+const RELOAD_SCRIPT =
+  'tell application "Ghostty" to perform action "reload_config" on focused terminal of selected tab of front window';
+
+const inGhostty = process.env.TERM_PROGRAM === "ghostty";
+
+const run = (cmd, args, opts = {}) =>
+  spawnSync(cmd, args, { encoding: "utf8", ...opts });
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+const familyLines = (args) =>
+  (run(GHOSTTY, ["+list-fonts", ...args]).stdout ?? "")
+    .split("\n")
+    .filter((l) => l && !/^\s/.test(l))
+    .map((l) => l.trim());
+
+function families() {
+  if (!existsSync(GHOSTTY)) {
+    console.error(`Ghostty not found at ${GHOSTTY}. Set GHOSTTY_BIN to its binary.`);
+    process.exit(1);
+  }
+  const names = new Set(familyLines([]));
+  names.add(EMBEDDED);
+  for (const f of UNFLAGGED) familyLines([`--family=${f}`]).forEach((n) => names.add(n));
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+const matching = (list, query) => {
+  const q = query.toLowerCase();
+  return list.filter((f) => f.toLowerCase().includes(q));
+};
+
+// Exact name first (any case), then a unique substring.
+function resolve(list, name) {
+  const exact = list.find((f) => f.toLowerCase() === name.toLowerCase());
+  if (exact) return exact;
+  const hits = matching(list, name);
+  if (hits.length === 1) return hits[0];
+  console.error(
+    hits.length
+      ? `"${name}" matches ${hits.length} fonts: ${hits.join(", ")}`
+      : `No font matches "${name}". Try: ghostty-font list`,
+  );
+  process.exit(1);
+}
+
+function readBook() {
+  try {
+    return loadBook(DUELS);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+}
+
+const configText = () => (existsSync(CONFIG) ? readFileSync(CONFIG, "utf8") : "");
+
+// First font-family in a config file's text, or null.
+const familyIn = (text) => text.match(/^\s*font-family\s*=\s*"?([^"\n]+?)"?\s*$/m)?.[1] ?? null;
+
+const configFamily = () => familyIn(configText());
+
+// Without this line in the config, the override is written and never read.
+const overrideIncluded = () => /^\s*config-file\s*=\s*"?\??"?[^\n]*font\.ghostty"?\s*$/m.test(configText());
+const NOT_INCLUDED = `Your Ghostty config doesn't load the override. Add this line to ${CONFIG}:  config-file = ?font.ghostty`;
+
+function current() {
+  if (!existsSync(OVERRIDE)) return configFamily();
+  // The override resets the list with `font-family = ""` first; skip that line.
+  const text = readFileSync(OVERRIDE, "utf8").replace(/^\s*font-family\s*=\s*""\s*$/m, "");
+  return familyIn(text) ?? configFamily();
+}
+
+function writeOverride(family, size) {
+  // The config's own font needs no override; drop it so nothing lingers.
+  if (family === configFamily() && !size) {
+    if (existsSync(OVERRIDE)) unlinkSync(OVERRIDE);
+    return;
+  }
+  // Reset first: font-family is a repeatable fallback list, and without the
+  // empty assignment this would append behind the config's font, not replace it.
+  const lines = [
+    "# Written by ghostty-font — a temporary font override. `ghostty-font reset` removes it.",
+    'font-family = ""',
+    `font-family = "${family}"`,
+  ];
+  if (size) lines.push(`font-size = ${size}`);
+  writeFileSync(OVERRIDE, lines.join("\n") + "\n");
+}
+
+function reload() {
+  if (!overrideIncluded()) console.error(NOT_INCLUDED);
+  if (!inGhostty) {
+    console.error("Not running inside Ghostty; press Cmd+Shift+, in Ghostty to reload.");
+    return;
+  }
+  const r = run("osascript", ["-e", RELOAD_SCRIPT]);
+  if (r.status !== 0) {
+    console.error(`Reload failed (${r.stderr.trim()}); press Cmd+Shift+, to reload.`);
+  }
+}
+
+function set(family, size) {
+  writeOverride(family, size);
+  reload();
+}
+
+function cycle(step) {
+  const list = families();
+  const i = list.indexOf(current());
+  const next = list[(i + step + list.length) % list.length];
+  set(next);
+  console.log(`${next}  (${list.indexOf(next) + 1}/${list.length})`);
+}
+
+// The list shows the first four lines; compare and rank have room for the rest.
+// The script is in no real language on purpose: it packs the things a code font
+// has to get right — ligature pairs, 0/O and 1/l/I, italics, dense punctuation —
+// into one screen.
+const PREVIEW = [
+  "The quick brown fox jumps over the lazy dog   0O o 1lI| rn m",
+  "«k:const» «f:add» «o:=» (a, b) «o:=>» a «o:+» b;  «c:// => != === <= >= -> ::» {}[]()",
+  "«k:if» (x «o:&&» y «o:||» «o:!»z) { «k:return» arr«o:?.»[«n:0»] «o:??» «n:null»; }   ~-_=+*#@$%^&",
+  "├── src/  └── README.md   ✓ ✗ → ▲ ▼ ░▒▓█",
+  "",
+  "«c:# duel.meta — decide which font you'll stare at for the next 10,000 hours»",
+  "«k:import» { glyphs, «t:Font» } «k:from» «s:\"@type/core\"»",
+  "«k:const» ROUNDS«o::» «t:u16» «o:=» «n:128»          «c:// enough for Elo to settle»",
+  "«k:type» «t:Verdict» «o:=» «t:Win» «o:|» «t:Loss» «o:|» «t:Tie»",
+  "",
+  "«d:@pure»",
+  "«k:fn» «f:duel»(a«o::» «t:Font», b«o::» «t:Font») «o:->» «t:Verdict» {",
+  "  «k:let» legible «o:=» a.x_height «o:>=» «n:0.52» «o:&&» «o:!»a.«f:confuses»(«s:\"0O\"», «s:\"1lI\"»)",
+  "  «k:match» «f:compare»(a, b) {",
+  "    «t:Ours» «k:if» legible «o:=>» «k:return» «t:Win»,",
+  "    _               «o:=>» «k:return» «t:Loss»,  «c:// no ligature is worth a squint»",
+  "  }",
+  "}",
+  "",
+  "«k:test» «s:\"zero never looks like O\"» {",
+  "  «f:assert»(«f:glyph»(«s:'0'») «o:!=» «f:glyph»(«s:'O'»), «s:\"ambiguous zero in {a.name}\"»)",
+  "  «f:expect»(ratings.«f:top»(«n:3»)«o:?.»first «o:??» «n:null»).«f:to_be»(«s:\"SF Mono\"»)",
+  "}",
+  "",
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ  abcdefghijklmnopqrstuvwxyz  0123456789",
+  "\x1b[1mBold: The quick brown fox 0O1lI\x1b[22m   \x1b[3mItalic: the lazy dog 0O1lI\x1b[23m",
+  "",
+  "«s:$» git log --oneline -2",
+  "«t:3f9c2e1» feat(rank): pair near the top once every font is calibrated (#12)",
+  "«t:a07d4b8» fix(list): reset color at the clip so it can't bleed (#11)",
+].map(paint);
+
+// opts.compare: an [A, B] pair to open straight into compare mode.
+// opts.rank: open straight into ranking duels.
+function pick(initialQuery, opts = {}) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.error("The interactive list needs a terminal. Use `ghostty-font list` or `set`.");
+    process.exit(2);
+  }
+
+  const fonts = families();
+  const configured = configFamily();
+  const included = overrideIncluded();
+  const before = existsSync(OVERRIDE) ? readFileSync(OVERRIDE, "utf8") : null;
+  const started = current();
+
+  const book = readBook();
+  let table, info, all;
+  const favorite = () => table.find((r) => r.rank === 1) ?? null;
+
+  let query = initialQuery;
+  let shown = [];
+  let cursor = 0;
+  let scroll = 0;
+  let applied = started;
+
+  let mode = opts.compare ? "compare" : "list";
+  let marks = opts.compare ?? [null, null]; // [A, B] in compare mode
+  let duel = [null, null]; // [A, B] in rank mode
+  let lastDuel = null;
+  let showing = 0; // which of the pair is on screen
+  let note = ""; // one-off message on the status line
+
+  function rerank() {
+    const keep = shown[cursor] ?? started;
+    table = standings(fonts, book);
+    info = new Map(table.map((r) => [r.name, r]));
+    all = table.map((r) => r.name);
+    shown = matching(all, query);
+    cursor = Math.max(shown.indexOf(keep), 0);
+  }
+  rerank();
+
+  const target = () =>
+    mode === "compare" ? marks[showing] : mode === "rank" ? duel[showing] : shown[cursor];
+
+  // Live apply: write + reload, one reload at a time, latest request wins.
+  let timer = null;
+  let reloading = false;
+  let queued = null;
+  let closing = false;
+
+  const pump = () => {
+    if (closing || reloading || queued === null) return;
+    const family = queued;
+    queued = null;
+    writeOverride(family);
+    applied = family;
+    draw();
+    if (!inGhostty) return;
+    reloading = true;
+    spawn("osascript", ["-e", RELOAD_SCRIPT], { stdio: "ignore" }).on("exit", () => {
+      reloading = false;
+      pump();
+    });
+  };
+
+  const schedule = () => {
+    clearTimeout(timer);
+    const family = target();
+    if (family === applied) queued = null; // flipped back before the last one landed
+    if (!family || family === applied) return;
+    // Scrolling waits for the cursor to rest; a deliberate A/B flip goes now.
+    timer = setTimeout(
+      () => {
+        queued = family;
+        pump();
+      },
+      mode === "list" ? SETTLE_MS : 0,
+    );
+  };
+
+  const out = (s) => process.stdout.write(s);
+  const dim = (s) => `\x1b[2m${s}\x1b[22m`;
+
+  const highlight = (name) => {
+    const at = query ? name.toLowerCase().indexOf(query.toLowerCase()) : -1;
+    if (at === -1) return name;
+    const end = at + query.length;
+    return `${name.slice(0, at)}\x1b[1;4m${name.slice(at, end)}\x1b[22;24m${name.slice(end)}`;
+  };
+
+  function draw() {
+    const rows = process.stdout.rows || 24;
+    const cols = process.stdout.columns || 80;
+    const rule = dim("─".repeat(cols));
+    const ranked = book.duels.length > 0;
+    const lines = [];
+
+    // stats: the list's rank column and rating tags. Duels leave them off so a
+    // rating can't sway the pick.
+    const row = (name, active, { letter = " ", search = false, stats = false } = {}) => {
+      const r = info.get(name);
+      const rankCol = stats && ranked ? (r.rank ? `#${r.rank}` : "").padEnd(4) : "";
+      const tags = [
+        stats && r.rank === 1 && "★ favorite",
+        stats && r.games && `${Math.round(r.rating)} · ${r.wins}-${r.losses}`,
+        stats && r.dropped && "dropped",
+        name === configured && "config",
+        name === EMBEDDED && "built-in",
+        name === applied && name !== configured && "showing",
+      ].filter(Boolean);
+      const tagText = tags.length ? `  ${tags.join(" · ")}` : "";
+      const label = clip(name, cols - 5 - rankCol.length - tagText.length);
+      const body = `${active ? "▸" : " "} \x1b[1m${letter}\x1b[22m ${dim(rankCol)}${search ? highlight(label) : label}${dim(tagText)}`;
+      return active ? `\x1b[7m${body}\x1b[K\x1b[27m` : body;
+    };
+
+    const previewLines = (room) => PREVIEW.slice(0, Math.max(room, 0)).map((l) => clipStyled(l, cols));
+
+    if (mode === "list") {
+      const preview = rows >= 16 ? previewLines(4) : [];
+      const listHeight = Math.max(rows - 4 - (preview.length ? preview.length + 1 : 0), 1);
+      if (cursor < scroll) scroll = cursor;
+      if (cursor >= scroll + listHeight) scroll = cursor - listHeight + 1;
+
+      const count = shown.length ? `${cursor + 1}/${shown.length}` : `0/${all.length}`;
+      lines.push(`\x1b[1mGhostty font\x1b[22m  ${dim(count)}  ${dim(clip(LIST_KEYS, cols - 22))}`);
+      lines.push(`Search: ${query}\x1b[7m \x1b[27m`);
+      lines.push(rule);
+      for (let r = 0; r < listHeight; r++) {
+        const i = scroll + r;
+        const name = shown[i];
+        if (name !== undefined) {
+          const slot = marks.indexOf(name);
+          lines.push(row(name, i === cursor, { letter: slot === -1 ? " " : "AB"[slot], search: true, stats: true }));
+        } else lines.push(r === 0 && !shown.length ? dim(`  No font contains "${query}"`) : "");
+      }
+      if (preview.length) lines.push(rule, ...preview);
+    } else {
+      const pair = mode === "rank" ? duel : marks;
+      lines.push(
+        mode === "rank"
+          ? `\x1b[1mGhostty font · rank\x1b[22m  ${dim(`duel ${book.duels.length + 1} · which would you rather read?`)}`
+          : "\x1b[1mGhostty font · compare\x1b[22m",
+      );
+      lines.push(dim(clip(mode === "rank" ? RANK_KEYS : COMPARE_KEYS, cols)));
+      lines.push(rule);
+      lines.push(row(pair[0], showing === 0, { letter: "A" }));
+      lines.push(row(pair[1], showing === 1, { letter: "B" }));
+      lines.push(rule);
+      lines.push(...previewLines(rows - 7));
+    }
+
+    // Bottom status line.
+    while (lines.length < rows - 1) lines.push("");
+    lines.length = rows - 1;
+    const fav = favorite();
+    const favText = fav
+      ? `★ Favorite so far: ${fav.name} (${Math.round(fav.rating)}, ${plural(book.duels.length, "duel")})`
+      : "";
+    let status;
+    if (!inGhostty) status = "Not in Ghostty: the font can't change live here.";
+    else if (!included) status = NOT_INCLUDED;
+    else if (mode === "rank") status = [note, favText || "Pick the one you'd rather read; the ranking builds as you go."].filter(Boolean).join("   ");
+    else if (note) status = note;
+    else if (mode === "list" && marks[0]) status = `A: ${marks[0]} · press → on another font to compare`;
+    else if (mode === "list") status = fav ? `${favText} · ^R to keep ranking` : "^R: rank fonts in random duels";
+    else status = "";
+    lines.push(dim(clip(status, cols)));
+
+    out("\x1b[H" + lines.map((l) => `${l}\x1b[K`).join("\r\n") + "\x1b[J");
+  }
+
+  function refilter() {
+    const keep = shown[cursor];
+    shown = matching(all, query);
+    cursor = Math.max(shown.indexOf(keep), 0);
+    scroll = 0;
+    schedule();
+  }
+
+  function move(step, wrap = true) {
+    if (!shown.length) return;
+    const n = shown.length;
+    cursor = wrap ? (cursor + step + n) % n : Math.min(Math.max(cursor + step, 0), n - 1);
+    schedule();
+  }
+
+  function mark(name) {
+    if (!name) return;
+    if (marks[0] === name) {
+      marks = [null, null];
+    } else if (!marks[0]) {
+      marks = [name, null];
+    } else {
+      marks = [marks[0], name];
+      mode = "compare";
+      showing = 1; // B is the font already under the cursor
+      schedule();
+    }
+  }
+
+  function show(which) {
+    showing = which;
+    schedule();
+  }
+
+  // Winner stays: the font on screen becomes A, the other mark is dropped.
+  function backToList() {
+    const kept = marks[showing];
+    mode = "list";
+    marks = [kept, null];
+    if (!shown.includes(kept)) {
+      query = "";
+      shown = all;
+    }
+    cursor = shown.indexOf(kept);
+    schedule();
+  }
+
+  const rankPool = () => fonts.filter((f) => !book.dropped.includes(f));
+
+  function newDuel(pair) {
+    duel = pair ?? nextPair(rankPool(), info, lastDuel);
+    lastDuel = duel;
+    showing = 0;
+    schedule();
+  }
+
+  function startRank() {
+    if (rankPool().length < 2) {
+      note = "Ranking needs at least two fonts that aren't dropped (`ghostty-font rank reset`).";
+      return;
+    }
+    mode = "rank";
+    marks = [null, null];
+    note = "";
+    newDuel();
+  }
+
+  // Back to the list, re-sorted by the new ratings, cursor on the favorite.
+  function leaveRank() {
+    mode = "list";
+    note = "";
+    query = "";
+    rerank();
+    cursor = Math.max(all.indexOf(favorite()?.name ?? duel[showing]), 0);
+    scroll = 0;
+    schedule();
+  }
+
+  function record(score) {
+    const [a, b] = duel;
+    book.duels.push({ a, b, score, at: new Date().toISOString() });
+    saveBook(DUELS, book);
+    rerank();
+    note = score === 0.5 ? `Tie: ${a} = ${b}.` : `${score ? a : b} beat ${score ? b : a}.`;
+    newDuel();
+  }
+
+  function dropShown() {
+    const name = duel[showing];
+    book.dropped.push(name);
+    saveBook(DUELS, book);
+    rerank();
+    if (rankPool().length < 2) {
+      leaveRank();
+      note = `Dropped ${name}; too few fonts left to rank.`;
+      return;
+    }
+    note = `Dropped ${name} from ranking.`;
+    newDuel();
+  }
+
+  function undo() {
+    const last = book.duels.pop();
+    if (!last) {
+      note = "Nothing to undo.";
+      return;
+    }
+    saveBook(DUELS, book);
+    rerank();
+    note = `Undid ${last.a} vs ${last.b}; pick again.`;
+    newDuel([last.a, last.b]);
+  }
+
+  // Put the override back exactly as it was when the list opened.
+  function restore() {
+    if (before === null) {
+      if (existsSync(OVERRIDE)) unlinkSync(OVERRIDE);
+    } else writeFileSync(OVERRIDE, before);
+    if (applied !== started) reload();
+  }
+
+  function finish(keep) {
+    closing = true;
+    clearTimeout(timer);
+    // After a hangup the terminal is already gone; still restore the font.
+    try {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      out("\x1b[?25h\x1b[?1049l");
+    } catch {}
+    const chosen = target();
+    if (keep && chosen) {
+      set(chosen);
+      console.log(`Font: ${chosen}`);
+    } else {
+      restore();
+      console.log(`Kept: ${started}`);
+    }
+    const fav = favorite();
+    if (fav) {
+      console.log(`Favorite so far: ${fav.name} (${Math.round(fav.rating)} after ${plural(book.duels.length, "duel")})`);
+    }
+    process.exit(0);
+  }
+
+  function listKey(k) {
+    const page = Math.max((process.stdout.rows || 24) - 10, 1);
+    note = "";
+    switch (k) {
+      case "\x1b[A": case "\x1bOA": case "\x1b[Z": case "\x10":
+        return move(-1);
+      case "\x1b[B": case "\x1bOB": case "\t": case "\x0e":
+        return move(1);
+      case "\x1b[C": case "\x1bOC":
+        return mark(shown[cursor]);
+      case "\x1b[D": case "\x1bOD":
+        marks = [null, null];
+        return;
+      case "\x12":
+        return startRank();
+      case "\x1b[5~":
+        return move(-page, false);
+      case "\x1b[6~":
+        return move(page, false);
+      case "\x1b[H": case "\x1b[1~":
+        return move(-cursor, false);
+      case "\x1b[F": case "\x1b[4~":
+        return move(shown.length, false);
+      case "\r": case "\n":
+        return finish(true);
+      case "\x1b": case "\x03":
+        return finish(false);
+      case "\x7f": case "\b":
+        query = query.slice(0, -1);
+        return refilter();
+      case "\x15":
+        query = "";
+        return refilter();
+    }
+    if (k >= " " && !k.startsWith("\x1b")) {
+      query += k;
+      refilter();
+    }
+  }
+
+  const FLIP = [" ", "\t", "\x1b[Z", "\x1b[A", "\x1bOA", "\x1b[B", "\x1bOB"];
+  const SHOW_A = ["\x1b[D", "\x1bOD", "a", "A"];
+  const SHOW_B = ["\x1b[C", "\x1bOC", "b", "B"];
+
+  function compareKey(k) {
+    if (FLIP.includes(k)) return show(1 - showing);
+    if (SHOW_A.includes(k) || k === "1") return show(0);
+    if (SHOW_B.includes(k) || k === "2") return show(1);
+    if (k === "\r" || k === "\n") return finish(true);
+    if (k === "\x1b") return backToList();
+    if (k === "\x03") return finish(false);
+  }
+
+  function rankKey(k) {
+    if (FLIP.includes(k)) return show(1 - showing);
+    if (SHOW_A.includes(k)) return show(0);
+    if (SHOW_B.includes(k)) return show(1);
+    switch (k) {
+      case "\r": case "\n":
+        return record(showing === 0 ? 1 : 0);
+      case "=":
+        return record(0.5);
+      case "s": case "S":
+        note = "Skipped.";
+        return newDuel();
+      case "x": case "X":
+        return dropShown();
+      case "u": case "U":
+        return undo();
+      case "\x1b":
+        return leaveRank();
+      case "\x03":
+        return finish(false);
+    }
+  }
+
+  // One data chunk can hold several keys (paste, key repeat), so walk it. A lone
+  // ESC doesn't match the sequence pattern and comes through as its own key.
+  function onKeys(data) {
+    let s = data.toString("utf8");
+    while (s.length) {
+      const key = s.match(/^\x1b(\[[0-9;]*[A-Za-z~]|O[A-Za-z])/)?.[0] ?? [...s][0];
+      s = s.slice(key.length);
+      ({ list: listKey, compare: compareKey, rank: rankKey })[mode](key);
+    }
+    draw();
+  }
+
+  if (opts.rank) {
+    startRank();
+    if (mode !== "rank") {
+      console.error(note);
+      process.exit(1);
+    }
+  }
+
+  out("\x1b[?1049h\x1b[?25l");
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.on("data", onKeys);
+  process.stdout.on("resize", draw);
+  // Closing the pane mid-browse shouldn't leave the trial font behind. A closed
+  // pane can end the process by closing stdin rather than by a signal, so the
+  // restore hangs off exit too.
+  for (const sig of ["SIGTERM", "SIGHUP"]) process.on(sig, () => finish(false));
+  process.stdin.on("end", () => finish(false));
+  process.on("exit", () => {
+    if (closing) return;
+    closing = true;
+    restore();
+  });
+  schedule();
+  draw();
+}
+
+const [cmd, ...rest] = process.argv.slice(2);
+switch (cmd) {
+  case "next":
+    cycle(1);
+    break;
+  case "prev":
+    cycle(-1);
+    break;
+  case "set": {
+    const size = /^\d+(\.\d+)?$/.test(rest.at(-1) ?? "") && rest.length > 1 ? rest.pop() : null;
+    if (!rest.length) {
+      console.error("usage: ghostty-font set <font> [size]");
+      process.exit(2);
+    }
+    const family = resolve(families(), rest.join(" "));
+    set(family, size);
+    console.log(`Font: ${family}${size ? ` ${size}` : ""}`);
+    break;
+  }
+  case "compare": {
+    if (rest.length !== 2) {
+      console.error('usage: ghostty-font compare <font> <font>   (quote names with spaces: "iosevka term")');
+      process.exit(2);
+    }
+    const list = families();
+    const pair = rest.map((name) => resolve(list, name));
+    if (pair[0] === pair[1]) {
+      console.error(`Both names resolve to ${pair[0]}; pick two different fonts.`);
+      process.exit(2);
+    }
+    pick("", { compare: pair });
+    break;
+  }
+  case "rank":
+    if (rest[0] === "reset") {
+      if (!existsSync(DUELS)) {
+        console.log("No duels recorded yet.");
+        break;
+      }
+      const { duels } = readBook();
+      renameSync(DUELS, `${DUELS}.bak`);
+      console.log(`Forgot ${plural(duels.length, "duel")} and all drops. Backup: ${DUELS}.bak`);
+    } else if (rest.length) {
+      console.error("usage: ghostty-font rank [reset]");
+      process.exit(2);
+    } else pick("", { rank: true });
+    break;
+  case "reset":
+    if (existsSync(OVERRIDE)) unlinkSync(OVERRIDE);
+    reload();
+    console.log(`Font: ${current()}`);
+    break;
+  case "current":
+    console.log(current());
+    break;
+  case "list": {
+    const now = current();
+    const book = readBook();
+    const table = standings(families(), book);
+    const names = new Set(matching(table.map((r) => r.name), rest.join(" ")));
+    const ranked = book.duels.length > 0;
+    for (const r of table.filter((r) => names.has(r.name))) {
+      const rank = ranked ? (r.rank ? `#${r.rank}` : "").padEnd(4) : "";
+      const stats = r.dropped
+        ? "dropped"
+        : r.games
+          ? `${Math.round(r.rating)}  ${r.wins}-${r.losses}${r.rank === 1 ? "  ★ favorite" : ""}`
+          : ranked ? "unrated" : "";
+      console.log(`${r.name === now ? "*" : " "} ${rank}${r.name.padEnd(20)} ${stats}`.trimEnd());
+    }
+    break;
+  }
+  case "help":
+  case "-h":
+  case "--help":
+    console.log(USAGE);
+    break;
+  default:
+    // Anything else is a search: `ghostty-font mono` opens the list filtered.
+    pick([cmd, ...rest].filter(Boolean).join(" "));
+}

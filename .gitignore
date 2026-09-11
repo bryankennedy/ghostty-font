@@ -1,0 +1,10 @@
+# Local environment secrets and overrides (none are needed today; ignored before any appear)
+.env
+.env.local
+.env.*.local
+
+# Dependencies installed by bun
+node_modules/
+
+# macOS Finder metadata
+.DS_Store

@@ -1,0 +1,47 @@
+name: test
+
+# Unit suite for the ranking and text helpers, on the forge (git.bck.dev).
+# Nothing runs on GitHub: it is a push mirror.
+#
+# The workflow and job are named `test` because `test / *` is the required
+# check on main (bkennedy/infrastructure, tofu/forgejo).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: docker
+    container:
+      image: node:22-trixie
+    timeout-minutes: 10
+    steps:
+      # Pinned to a commit, not a tag: a tag on the actions mirror can be moved.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Checked against a literal digest: a checksum fetched from the same
+      # release as the binary is not an independent check. Same pin as
+      # bkennedy/infrastructure's .forgejo/ci/install-tools.sh.
+      - name: Install bun
+        env:
+          BUN_VERSION: 1.3.13
+          BUN_SHA256: 79c0771fa8b92c33aae41e15a0e0d307ea99d0e2f00317c71c6c53237a78e25a
+        run: |
+          curl -fsSL --retry 3 -o /tmp/bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+          echo "${BUN_SHA256}  /tmp/bun.zip" | sha256sum -c --quiet -
+          python3 -m zipfile -e /tmp/bun.zip /tmp
+          install -m 0755 /tmp/bun-linux-x64/bun /usr/local/bin/bun
+          bun --version
+
+      # No dependencies to install: the tool uses only Node built-ins.
+      - name: Unit suite
+        run: bun test
