@@ -1,6 +1,6 @@
 {
   "name": "ghostty-font",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Try monospace fonts in Ghostty live, compare two side by side, and rank them with Elo.",
   "type": "module",
   "private": true,
