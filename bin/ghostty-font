@@ -19,7 +19,8 @@
 //   ghostty-font set <font> [size]   <font> may be any unique substring ("plex")
 //   ghostty-font reset           delete the override; back to the config's font
 //   ghostty-font current
-//   ghostty-font list [search]   ranked by rating once there are duels
+//   ghostty-font list [search]   ranked by rating once there are duels; rated fonts
+//                                that aren't installed come last
 //
 // Fonts come from `ghostty +list-fonts` (monospace families Ghostty can find),
 // plus JetBrains Mono, which Ghostty embeds and so never shows up in that list,
@@ -43,7 +44,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadBook, nextPair, saveBook, standings } from "../src/ranking.js";
+import { loadBook, nextPair, saveBook, standings, unavailable } from "../src/ranking.js";
 import { clip, clipStyled, paint } from "../src/text.js";
 
 const GHOSTTY = process.env.GHOSTTY_BIN || "/Applications/Ghostty.app/Contents/MacOS/ghostty";
@@ -141,6 +142,19 @@ function current() {
   return familyIn(text) ?? configFamily();
 }
 
+// When the font it's told to use isn't installed (say, uninstalled after the
+// override named it), Ghostty falls back to its built-in font without a word.
+// A warning naming the way back, or null when `family` is installed.
+function missingWarning(list, family) {
+  if (!family || list.some((f) => f.toLowerCase() === family.toLowerCase())) return null;
+  const configured = configFamily();
+  const fix =
+    existsSync(OVERRIDE) && configured && configured.toLowerCase() !== family.toLowerCase()
+      ? `reinstall it, or \`ghostty-font reset\` to go back to ${configured}`
+      : "reinstall it or choose another font";
+  return `${family} isn't installed, so Ghostty falls back to its built-in font: ${fix}.`;
+}
+
 function writeOverride(family, size) {
   // The config's own font needs no override; drop it so nothing lingers.
   if (family === configFamily() && !size) {
@@ -233,6 +247,7 @@ function pick(initialQuery, opts = {}) {
   const included = overrideIncluded();
   const before = existsSync(OVERRIDE) ? readFileSync(OVERRIDE, "utf8") : null;
   const started = current();
+  const startWarning = missingWarning(fonts, started);
 
   const book = readBook();
   let table, info, all;
@@ -529,6 +544,7 @@ function pick(initialQuery, opts = {}) {
     } else {
       restore();
       console.log(`Kept: ${started}`);
+      if (startWarning) console.error(startWarning);
     }
     const fav = favorite();
     if (fav) {
@@ -632,6 +648,8 @@ function pick(initialQuery, opts = {}) {
       process.exit(1);
     }
   }
+  // Until the first key, since Esc would put that missing font back.
+  if (startWarning) note = startWarning;
 
   out("\x1b[?1049h\x1b[?25l");
   process.stdin.setRawMode(true);
@@ -709,10 +727,12 @@ switch (cmd) {
     break;
   case "list": {
     const now = current();
+    const fonts = families();
     const book = readBook();
-    const table = standings(families(), book);
+    const table = standings(fonts, book);
     const names = new Set(matching(table.map((r) => r.name), rest.join(" ")));
     const ranked = book.duels.length > 0;
+    const line = (r, rank, stats) => `${r.name === now ? "*" : " "} ${rank}${r.name.padEnd(20)} ${stats}`.trimEnd();
     for (const r of table.filter((r) => names.has(r.name))) {
       const rank = ranked ? (r.rank ? `#${r.rank}` : "").padEnd(4) : "";
       const stats = r.dropped
@@ -720,8 +740,19 @@ switch (cmd) {
         : r.games
           ? `${Math.round(r.rating)}  ${r.wins}-${r.losses}${r.rank === 1 ? "  ★ favorite" : ""}`
           : ranked ? "unrated" : "";
-      console.log(`${r.name === now ? "*" : " "} ${rank}${r.name.padEnd(20)} ${stats}`.trimEnd());
+      console.log(line(r, rank, stats));
     }
+    // Uninstalled fonts keep their duels; list them apart, since they can't be shown.
+    const gone = unavailable(fonts, book);
+    const goneNames = new Set(matching(gone.map((r) => r.name), rest.join(" ")));
+    if (goneNames.size) {
+      console.log("\nRated but not installed (install one again to rank it):");
+      for (const r of gone.filter((r) => goneNames.has(r.name))) {
+        console.log(line(r, "".padEnd(4), r.dropped ? "dropped" : `${Math.round(r.rating)}  ${r.wins}-${r.losses}`));
+      }
+    }
+    const warning = missingWarning(fonts, now);
+    if (warning) console.error(`\n${warning}`);
     break;
   }
   case "help":

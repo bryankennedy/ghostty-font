@@ -98,6 +98,17 @@ first. In simulation (31 fonts, picks that agree with a hidden order 90% of the
 time) the true favorite was ranked first after 90 duels 60% of the time, and
 after 180 duels 83%. Dropping fonts you clearly dislike gets there sooner.
 
+### Fonts that go missing
+
+Ratings live in the duel log, not in the fonts, so uninstalling a font loses
+none of its duels: `list` shows it after the installed fonts, and installing it
+again puts it back in the ranking.
+
+If the font you're using goes missing, whether the override or your config names it,
+Ghostty falls back to its built-in font without saying why. `list` and the
+interactive list warn about it, and `ghostty-font reset` goes back to your
+config's font.
+
 ## Files
 
 | Path | What |

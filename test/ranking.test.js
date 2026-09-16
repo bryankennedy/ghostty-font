@@ -2,7 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CALIBRATION, K, START_RATING, loadBook, nextPair, ratingsFrom, saveBook, standings } from "../src/ranking.js";
+import {
+  CALIBRATION,
+  K,
+  START_RATING,
+  loadBook,
+  nextPair,
+  ratingsFrom,
+  saveBook,
+  standings,
+  unavailable,
+} from "../src/ranking.js";
 
 // A seeded generator so pair selection is reproducible.
 const seeded = (seed) => () => ((seed = (seed * 1664525 + 1013904223) % 2 ** 32) / 2 ** 32);
@@ -59,6 +69,30 @@ describe("standings", () => {
     expect(rows.map((r) => r.name)).toEqual(["Charlie", "Alpha", "Delta", "Foxtrot", "Bravo", "Echo"]);
     expect(rows.map((r) => r.rank)).toEqual([1, 2, null, null, null, null]);
     expect(rows.find((r) => r.name === "Echo")).toMatchObject({ dropped: true, games: 1 });
+  });
+});
+
+describe("unavailable", () => {
+  test("rated fonts missing from the installed list, best-first, unranked", () => {
+    const book = {
+      duels: [
+        { a: "Gone", b: "Alpha", score: 1 },
+        { a: "Alpha", b: "Lost", score: 1 },
+        { a: "Lost", b: "Bravo", score: 0.5 },
+      ],
+      dropped: ["Lost"],
+    };
+    const rows = unavailable(fonts, book);
+    expect(rows.map((r) => r.name)).toEqual(["Gone", "Lost"]);
+    expect(rows[0]).toMatchObject({ games: 1, wins: 1, losses: 0, dropped: false, rank: null });
+    expect(rows[1]).toMatchObject({ games: 2, wins: 0, losses: 1, dropped: true, rank: null });
+  });
+
+  test("installing a missing font again brings back its rating", () => {
+    const book = { duels: [{ a: "Gone", b: "Alpha", score: 1 }], dropped: [] };
+    expect(standings(fonts, book).map((r) => r.name)).not.toContain("Gone");
+    expect(standings([...fonts, "Gone"], book)[0]).toMatchObject({ name: "Gone", rank: 1 });
+    expect(unavailable([...fonts, "Gone"], book)).toEqual([]);
   });
 });
 

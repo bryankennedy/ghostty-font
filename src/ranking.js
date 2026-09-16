@@ -73,6 +73,18 @@ export function standings(fonts, book) {
   return [...rated, ...rows.filter((r) => !r.games && !r.dropped), ...rows.filter((r) => r.dropped)];
 }
 
+// Rated fonts that aren't in `fonts` — usually uninstalled since they were
+// ranked. standings leaves them out because they can't be shown; their duels
+// still count, and installing one again puts it back. Best-first, no rank.
+export function unavailable(fonts, book) {
+  const installed = new Set(fonts);
+  const dropped = new Set(book.dropped);
+  return [...ratingsFrom(book.duels)]
+    .filter(([name]) => !installed.has(name))
+    .map(([name, r]) => ({ name, ...r, dropped: dropped.has(name), rank: null }))
+    .sort((x, y) => y.rating - x.rating);
+}
+
 const oneOf = (list, random) => list[Math.floor(random() * list.length)];
 
 // Until every font has CALIBRATION duels, one side is a least-played font, so
