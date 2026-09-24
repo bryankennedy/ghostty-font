@@ -1,0 +1,5 @@
+# Scaffolded by bkennedy/infrastructure scripts/forgejo-review-sync.mjs and
+# never overwritten by it: replace this catch-all with an itemised
+# high-blast-radius list when this repository grows one. Each rule is a Go
+# regular expression over the repo-relative path, followed by owners.
+^.*$   @bkennedy
