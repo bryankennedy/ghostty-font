@@ -28,19 +28,26 @@ jobs:
         with:
           persist-credentials: false
 
-      # Checked against a literal digest: a checksum fetched from the same
-      # release as the binary is not an independent check. Same pin as
-      # bkennedy/infrastructure's .forgejo/ci/install-tools.sh.
+      # bun's release zip from the runner cache when it is there: GitHub's
+      # release CDN serves bet at ~1 MB/s. install-tools.sh's fetch() checks
+      # a restored zip against BUN_SHA256 exactly as it checks a download,
+      # and saving is for main's runs only (INFRA-193).
+      - name: Restore the bun download
+        id: bun-download
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /root/.cache/ci-downloads
+          key: ci-downloads-bun-${{ hashFiles('.forgejo/ci/install-tools.sh') }}
+
       - name: Install bun
-        env:
-          BUN_VERSION: 1.3.13
-          BUN_SHA256: 79c0771fa8b92c33aae41e15a0e0d307ea99d0e2f00317c71c6c53237a78e25a
-        run: |
-          curl -fsSL --retry 3 -o /tmp/bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
-          echo "${BUN_SHA256}  /tmp/bun.zip" | sha256sum -c --quiet -
-          python3 -m zipfile -e /tmp/bun.zip /tmp
-          install -m 0755 /tmp/bun-linux-x64/bun /usr/local/bin/bun
-          bun --version
+        run: sh .forgejo/ci/install-tools.sh bun
+
+      - name: Save the bun download
+        if: github.event_name != 'pull_request' && steps.bun-download.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /root/.cache/ci-downloads
+          key: ci-downloads-bun-${{ hashFiles('.forgejo/ci/install-tools.sh') }}
 
       # No dependencies to install: the tool uses only Node built-ins.
       - name: Unit suite

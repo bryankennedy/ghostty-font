@@ -14,6 +14,8 @@
 # hash-pinning would mean pinning every transitive dependency too.
 set -eu
 
+DOWNLOAD_CACHE_DIR=/root/.cache/ci-downloads
+
 CLAUDE_TGZ_SHA256=010258658ab7a0aa09ea992cb2a314689e25ce42854c57d6993e3136097039d5
 CLAUDE_BIN_SHA256=0399c793ff571d5946ef923d80b4f330d05ac4b6842a6b0775468f5d389403c0
 CLAUDE_CACHE_DIR=/usr/local/lib/claude-code
@@ -27,8 +29,22 @@ trap 'rm -rf "$tmp"' EXIT
 
 # fetch <url> <sha256> <dest> — the only way this script downloads anything.
 fetch() {
+  # Not `cached`: POSIX sh has no locals, and install_claude() keeps its own
+  # path in `cached` across its fetch() call (INFRA-192 overwrote it).
+  fetched="$DOWNLOAD_CACHE_DIR/$2"
+  if [ -f "$fetched" ]; then
+    cp "$fetched" "$3"
+    if echo "$2  $3" | sha256sum -c --quiet - >/dev/null 2>&1; then
+      echo "$(basename "$1"): restored from the runner cache, digest verified"
+      return 0
+    fi
+    echo "cached $(basename "$1") failed its digest check: discarding it and downloading fresh" >&2
+    rm -f "$fetched"
+  fi
   curl -fsSL --retry 3 -o "$3" "$1"
   echo "$2  $3" | sha256sum -c --quiet -
+  mkdir -p "$DOWNLOAD_CACHE_DIR"
+  cp "$3" "$fetched"
 }
 
 apt_install() {
@@ -39,6 +55,9 @@ apt_install() {
 install_bun() {
   fetch "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" \
     "$BUN_SHA256" "$tmp/bun.zip"
+  # node:22-trixie ships unzip, so this costs nothing today; it keeps a
+  # slimmer image from failing every job that installs bun (argus, #107).
+  command -v unzip >/dev/null || apt_install unzip
   unzip -q -o "$tmp/bun.zip" -d "$tmp"
   install -m 0755 "$tmp/bun-linux-x64/bun" /usr/local/bin/bun
   bun --version
@@ -67,13 +86,20 @@ install_claude() {
 }
 
 case "${1:-}" in
+  # bun alone, for the jobs that need nothing else (INFRA-193). No apt up
+  # front: install_bun() runs it only if the image lacks unzip. This arm
+  # belongs to this repository; the review-kit sync leaves it alone.
+  bun)
+    install_bun
+    ;;
   review)
-    apt_install unzip
+    # No apt up front: node:22-trixie already has unzip, and the update alone
+    # was ~11 s of every review. install_bun() falls back to apt if it is not.
     install_bun
     install_claude
     ;;
   *)
-    echo "usage: $0 review" >&2
+    echo "usage: $0 bun|review" >&2
     exit 2
     ;;
 esac
