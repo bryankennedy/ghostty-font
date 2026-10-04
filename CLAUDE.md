@@ -75,6 +75,11 @@ Everything else is standard.
 
 ### Deliberate: do not flag
 
+- `actions/cache` steps in any job, including the secret-holding `review` job: the forge's runner
+  isolates cache entries written by `pull_request` runs, so a trusted run
+  cannot restore one (measured 2026-10-03). The fleet rule and its four
+  conditions are in `bkennedy/infrastructure`, `docs/house-standards.md`
+  section 7 (INFRA-203).
 - macOS only: `"os": ["darwin"]`, the `/Applications/Ghostty.app` default
   (`GHOSTTY_BIN` overrides it), and reloading through `osascript`.
 - The built-in picker instead of fzf (fzf's synchronous focus hook queued one
