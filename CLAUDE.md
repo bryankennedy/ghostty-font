@@ -72,6 +72,8 @@ Everything else is standard.
 - Weakening the review's own sandbox: `claude-review.yml` triggering on
   `pull_request`, a checkout that keeps credentials, a secret reaching a step
   that reads `pr/`, or the Claude step losing `--restricted` or `env -i`.
+- A cache step with `restore-keys` or a key not derived from `hashFiles`. The
+  runner cache is accepted for exact keys only (INFRA-203).
 
 ### Deliberate: do not flag
 
