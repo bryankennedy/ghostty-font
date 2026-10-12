@@ -16,9 +16,14 @@
     "src"
   ],
   "scripts": {
-    "test": "bun test"
+    "test": "bun test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "os": [
     "darwin"
-  ]
+  ],
+  "devDependencies": {
+    "prettier": "^3.9.4"
+  }
 }

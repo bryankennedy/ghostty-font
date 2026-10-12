@@ -70,7 +70,11 @@ export function standings(fonts, book) {
   }));
   const rated = rows.filter((r) => r.games && !r.dropped).sort((x, y) => y.rating - x.rating);
   rated.forEach((r, i) => (r.rank = i + 1));
-  return [...rated, ...rows.filter((r) => !r.games && !r.dropped), ...rows.filter((r) => r.dropped)];
+  return [
+    ...rated,
+    ...rows.filter((r) => !r.games && !r.dropped),
+    ...rows.filter((r) => r.dropped),
+  ];
 }
 
 // Rated fonts that aren't in `fonts` — usually uninstalled since they were
@@ -104,7 +108,10 @@ export function nextPair(pool, info, last, random = Math.random) {
   const contenders = [...pool]
     .sort((x, y) => rating(y) - rating(x))
     .slice(0, Math.max(4, Math.ceil(pool.length / 3)));
-  const a = oneOf(fewest < CALIBRATION ? pool.filter((f) => games(f) === fewest) : contenders, random);
+  const a = oneOf(
+    fewest < CALIBRATION ? pool.filter((f) => games(f) === fewest) : contenders,
+    random,
+  );
   const rematch = (f) => last?.includes(a) && last?.includes(f);
   const others = pool.filter((f) => f !== a && !rematch(f));
   const candidates = (others.length ? others : pool.filter((f) => f !== a))

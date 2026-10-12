@@ -1,0 +1,19 @@
+# Prettier 3 also reads .gitignore, so node_modules/ is already excluded there.
+# This file only lists tracked files that must stay out of the formatter.
+
+# Bun lockfile — machine-generated
+bun.lock
+
+# Markdown is deliberately unformatted, as it is fleet-wide (INFRA-158, and
+# progress's docs/decisions/prettier-adoption.md): Prettier pipe-pads tables so
+# any cell edit re-pads the whole table — the giant whitespace diffs this setup
+# exists to prevent — and rewrites *italic* as _italic_ across hand-written docs.
+*.md
+
+# The Claude PR review kit is copied byte for byte from bkennedy/infrastructure
+# (scripts/forgejo-review-sync.mjs), and its nightly drift check compares these
+# files verbatim. Formatting them here would make every copy drift from
+# canonical; change them in infrastructure and re-sync instead. Listed ahead of
+# the kit's arrival so the first `bun run format` after a sync cannot drift them.
+scripts/forgejo-review.mjs
+.forgejo/workflows/claude-review.yml

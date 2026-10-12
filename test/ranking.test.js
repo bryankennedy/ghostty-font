@@ -15,7 +15,7 @@ import {
 } from "../src/ranking.js";
 
 // A seeded generator so pair selection is reproducible.
-const seeded = (seed) => () => ((seed = (seed * 1664525 + 1013904223) % 2 ** 32) / 2 ** 32);
+const seeded = (seed) => () => (seed = (seed * 1664525 + 1013904223) % 2 ** 32) / 2 ** 32;
 
 const fonts = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"];
 
@@ -66,7 +66,14 @@ describe("standings", () => {
       dropped: ["Bravo", "Echo"],
     };
     const rows = standings(fonts, book);
-    expect(rows.map((r) => r.name)).toEqual(["Charlie", "Alpha", "Delta", "Foxtrot", "Bravo", "Echo"]);
+    expect(rows.map((r) => r.name)).toEqual([
+      "Charlie",
+      "Alpha",
+      "Delta",
+      "Foxtrot",
+      "Bravo",
+      "Echo",
+    ]);
     expect(rows.map((r) => r.rank)).toEqual([1, 2, null, null, null, null]);
     expect(rows.find((r) => r.name === "Echo")).toMatchObject({ dropped: true, games: 1 });
   });
@@ -132,7 +139,10 @@ describe("nextPair", () => {
   });
 
   test("with two fonts the only pair is allowed to repeat", () => {
-    expect([...nextPair(["Alpha", "Bravo"], new Map(), ["Alpha", "Bravo"])].sort()).toEqual(["Alpha", "Bravo"]);
+    expect([...nextPair(["Alpha", "Bravo"], new Map(), ["Alpha", "Bravo"])].sort()).toEqual([
+      "Alpha",
+      "Bravo",
+    ]);
   });
 
   test("once calibrated, one side is a top-rated contender", () => {
@@ -165,7 +175,10 @@ describe("book file", () => {
 
   test("round-trips through save and load, creating the directory", () => {
     const path = join(dir, "nested/duels.json");
-    const book = { duels: [{ a: "Alpha", b: "Bravo", score: 1, at: "2026-09-11T00:00:00.000Z" }], dropped: ["Echo"] };
+    const book = {
+      duels: [{ a: "Alpha", b: "Bravo", score: 1, at: "2026-09-11T00:00:00.000Z" }],
+      dropped: ["Echo"],
+    };
     saveBook(path, book);
     expect(loadBook(path)).toEqual(book);
     expect(readFileSync(path, "utf8").endsWith("\n")).toBe(true);

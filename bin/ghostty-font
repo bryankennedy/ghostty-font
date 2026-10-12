@@ -51,7 +51,10 @@ const GHOSTTY = process.env.GHOSTTY_BIN || "/Applications/Ghostty.app/Contents/M
 const CONFIG_DIR = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "ghostty");
 const CONFIG = join(CONFIG_DIR, "config");
 const OVERRIDE = join(CONFIG_DIR, "font.ghostty");
-const DUELS = join(process.env.XDG_STATE_HOME || join(homedir(), ".local/state"), "ghostty-font/duels.json");
+const DUELS = join(
+  process.env.XDG_STATE_HOME || join(homedir(), ".local/state"),
+  "ghostty-font/duels.json",
+);
 const EMBEDDED = "JetBrains Mono";
 // Monospace fonts that don't set the fixed-pitch flag, so `+list-fonts` skips
 // them. Listed only when installed.
@@ -74,8 +77,7 @@ const RELOAD_SCRIPT =
 
 const inGhostty = process.env.TERM_PROGRAM === "ghostty";
 
-const run = (cmd, args, opts = {}) =>
-  spawnSync(cmd, args, { encoding: "utf8", ...opts });
+const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: "utf8", ...opts });
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -132,7 +134,8 @@ const familyIn = (text) => text.match(/^\s*font-family\s*=\s*"?([^"\n]+?)"?\s*$/
 const configFamily = () => familyIn(configText());
 
 // Without this line in the config, the override is written and never read.
-const overrideIncluded = () => /^\s*config-file\s*=\s*"?\??"?[^\n]*font\.ghostty"?\s*$/m.test(configText());
+const overrideIncluded = () =>
+  /^\s*config-file\s*=\s*"?\??"?[^\n]*font\.ghostty"?\s*$/m.test(configText());
 const NOT_INCLUDED = `Your Ghostty config doesn't load the override. Add this line to ${CONFIG}:  config-file = ?font.ghostty`;
 
 function current() {
@@ -208,22 +211,22 @@ const PREVIEW = [
   "├── src/  └── README.md   ✓ ✗ → ▲ ▼ ░▒▓█",
   "",
   "«c:# duel.meta — decide which font you'll stare at for the next 10,000 hours»",
-  "«k:import» { glyphs, «t:Font» } «k:from» «s:\"@type/core\"»",
+  '«k:import» { glyphs, «t:Font» } «k:from» «s:"@type/core"»',
   "«k:const» ROUNDS«o::» «t:u16» «o:=» «n:128»          «c:// enough for Elo to settle»",
   "«k:type» «t:Verdict» «o:=» «t:Win» «o:|» «t:Loss» «o:|» «t:Tie»",
   "",
   "«d:@pure»",
   "«k:fn» «f:duel»(a«o::» «t:Font», b«o::» «t:Font») «o:->» «t:Verdict» {",
-  "  «k:let» legible «o:=» a.x_height «o:>=» «n:0.52» «o:&&» «o:!»a.«f:confuses»(«s:\"0O\"», «s:\"1lI\"»)",
+  '  «k:let» legible «o:=» a.x_height «o:>=» «n:0.52» «o:&&» «o:!»a.«f:confuses»(«s:"0O"», «s:"1lI"»)',
   "  «k:match» «f:compare»(a, b) {",
   "    «t:Ours» «k:if» legible «o:=>» «k:return» «t:Win»,",
   "    _               «o:=>» «k:return» «t:Loss»,  «c:// no ligature is worth a squint»",
   "  }",
   "}",
   "",
-  "«k:test» «s:\"zero never looks like O\"» {",
+  '«k:test» «s:"zero never looks like O"» {',
   "  «f:assert»(«f:glyph»(«s:'0'») «o:!=» «f:glyph»(«s:'O'»), «s:\"ambiguous zero in {a.name}\"»)",
-  "  «f:expect»(ratings.«f:top»(«n:3»)«o:?.»first «o:??» «n:null»).«f:to_be»(«s:\"SF Mono\"»)",
+  '  «f:expect»(ratings.«f:top»(«n:3»)«o:?.»first «o:??» «n:null»).«f:to_be»(«s:"SF Mono"»)',
   "}",
   "",
   "ABCDEFGHIJKLMNOPQRSTUVWXYZ  abcdefghijklmnopqrstuvwxyz  0123456789",
@@ -351,7 +354,8 @@ function pick(initialQuery, opts = {}) {
       return active ? `\x1b[7m${body}\x1b[K\x1b[27m` : body;
     };
 
-    const previewLines = (room) => PREVIEW.slice(0, Math.max(room, 0)).map((l) => clipStyled(l, cols));
+    const previewLines = (room) =>
+      PREVIEW.slice(0, Math.max(room, 0)).map((l) => clipStyled(l, cols));
 
     if (mode === "list") {
       const preview = rows >= 16 ? previewLines(4) : [];
@@ -368,7 +372,13 @@ function pick(initialQuery, opts = {}) {
         const name = shown[i];
         if (name !== undefined) {
           const slot = marks.indexOf(name);
-          lines.push(row(name, i === cursor, { letter: slot === -1 ? " " : "AB"[slot], search: true, stats: true }));
+          lines.push(
+            row(name, i === cursor, {
+              letter: slot === -1 ? " " : "AB"[slot],
+              search: true,
+              stats: true,
+            }),
+          );
         } else lines.push(r === 0 && !shown.length ? dim(`  No font contains "${query}"`) : "");
       }
       if (preview.length) lines.push(rule, ...preview);
@@ -397,10 +407,15 @@ function pick(initialQuery, opts = {}) {
     let status;
     if (!inGhostty) status = "Not in Ghostty: the font can't change live here.";
     else if (!included) status = NOT_INCLUDED;
-    else if (mode === "rank") status = [note, favText || "Pick the one you'd rather read; the ranking builds as you go."].filter(Boolean).join("   ");
+    else if (mode === "rank")
+      status = [note, favText || "Pick the one you'd rather read; the ranking builds as you go."]
+        .filter(Boolean)
+        .join("   ");
     else if (note) status = note;
-    else if (mode === "list" && marks[0]) status = `A: ${marks[0]} · press → on another font to compare`;
-    else if (mode === "list") status = fav ? `${favText} · ^R to keep ranking` : "^R: rank fonts in random duels";
+    else if (mode === "list" && marks[0])
+      status = `A: ${marks[0]} · press → on another font to compare`;
+    else if (mode === "list")
+      status = fav ? `${favText} · ^R to keep ranking` : "^R: rank fonts in random duels";
     else status = "";
     lines.push(dim(clip(status, cols)));
 
@@ -548,7 +563,9 @@ function pick(initialQuery, opts = {}) {
     }
     const fav = favorite();
     if (fav) {
-      console.log(`Favorite so far: ${fav.name} (${Math.round(fav.rating)} after ${plural(book.duels.length, "duel")})`);
+      console.log(
+        `Favorite so far: ${fav.name} (${Math.round(fav.rating)} after ${plural(book.duels.length, "duel")})`,
+      );
     }
     process.exit(0);
   }
@@ -557,13 +574,21 @@ function pick(initialQuery, opts = {}) {
     const page = Math.max((process.stdout.rows || 24) - 10, 1);
     note = "";
     switch (k) {
-      case "\x1b[A": case "\x1bOA": case "\x1b[Z": case "\x10":
+      case "\x1b[A":
+      case "\x1bOA":
+      case "\x1b[Z":
+      case "\x10":
         return move(-1);
-      case "\x1b[B": case "\x1bOB": case "\t": case "\x0e":
+      case "\x1b[B":
+      case "\x1bOB":
+      case "\t":
+      case "\x0e":
         return move(1);
-      case "\x1b[C": case "\x1bOC":
+      case "\x1b[C":
+      case "\x1bOC":
         return mark(shown[cursor]);
-      case "\x1b[D": case "\x1bOD":
+      case "\x1b[D":
+      case "\x1bOD":
         marks = [null, null];
         return;
       case "\x12":
@@ -572,15 +597,20 @@ function pick(initialQuery, opts = {}) {
         return move(-page, false);
       case "\x1b[6~":
         return move(page, false);
-      case "\x1b[H": case "\x1b[1~":
+      case "\x1b[H":
+      case "\x1b[1~":
         return move(-cursor, false);
-      case "\x1b[F": case "\x1b[4~":
+      case "\x1b[F":
+      case "\x1b[4~":
         return move(shown.length, false);
-      case "\r": case "\n":
+      case "\r":
+      case "\n":
         return finish(true);
-      case "\x1b": case "\x03":
+      case "\x1b":
+      case "\x03":
         return finish(false);
-      case "\x7f": case "\b":
+      case "\x7f":
+      case "\b":
         query = query.slice(0, -1);
         return refilter();
       case "\x15":
@@ -611,16 +641,20 @@ function pick(initialQuery, opts = {}) {
     if (SHOW_A.includes(k)) return show(0);
     if (SHOW_B.includes(k)) return show(1);
     switch (k) {
-      case "\r": case "\n":
+      case "\r":
+      case "\n":
         return record(showing === 0 ? 1 : 0);
       case "=":
         return record(0.5);
-      case "s": case "S":
+      case "s":
+      case "S":
         note = "Skipped.";
         return newDuel();
-      case "x": case "X":
+      case "x":
+      case "X":
         return dropShown();
-      case "u": case "U":
+      case "u":
+      case "U":
         return undo();
       case "\x1b":
         return leaveRank();
@@ -691,7 +725,9 @@ switch (cmd) {
   }
   case "compare": {
     if (rest.length !== 2) {
-      console.error('usage: ghostty-font compare <font> <font>   (quote names with spaces: "iosevka term")');
+      console.error(
+        'usage: ghostty-font compare <font> <font>   (quote names with spaces: "iosevka term")',
+      );
       process.exit(2);
     }
     const list = families();
@@ -730,25 +766,44 @@ switch (cmd) {
     const fonts = families();
     const book = readBook();
     const table = standings(fonts, book);
-    const names = new Set(matching(table.map((r) => r.name), rest.join(" ")));
+    const names = new Set(
+      matching(
+        table.map((r) => r.name),
+        rest.join(" "),
+      ),
+    );
     const ranked = book.duels.length > 0;
-    const line = (r, rank, stats) => `${r.name === now ? "*" : " "} ${rank}${r.name.padEnd(20)} ${stats}`.trimEnd();
+    const line = (r, rank, stats) =>
+      `${r.name === now ? "*" : " "} ${rank}${r.name.padEnd(20)} ${stats}`.trimEnd();
     for (const r of table.filter((r) => names.has(r.name))) {
       const rank = ranked ? (r.rank ? `#${r.rank}` : "").padEnd(4) : "";
       const stats = r.dropped
         ? "dropped"
         : r.games
           ? `${Math.round(r.rating)}  ${r.wins}-${r.losses}${r.rank === 1 ? "  ★ favorite" : ""}`
-          : ranked ? "unrated" : "";
+          : ranked
+            ? "unrated"
+            : "";
       console.log(line(r, rank, stats));
     }
     // Uninstalled fonts keep their duels; list them apart, since they can't be shown.
     const gone = unavailable(fonts, book);
-    const goneNames = new Set(matching(gone.map((r) => r.name), rest.join(" ")));
+    const goneNames = new Set(
+      matching(
+        gone.map((r) => r.name),
+        rest.join(" "),
+      ),
+    );
     if (goneNames.size) {
       console.log("\nRated but not installed (install one again to rank it):");
       for (const r of gone.filter((r) => goneNames.has(r.name))) {
-        console.log(line(r, "".padEnd(4), r.dropped ? "dropped" : `${Math.round(r.rating)}  ${r.wins}-${r.losses}`));
+        console.log(
+          line(
+            r,
+            "".padEnd(4),
+            r.dropped ? "dropped" : `${Math.round(r.rating)}  ${r.wins}-${r.losses}`,
+          ),
+        );
       }
     }
     const warning = missingWarning(fonts, now);

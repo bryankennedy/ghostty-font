@@ -15,7 +15,7 @@ export function clipStyled(s, width) {
   let room = Math.max(width - 1, 0);
   for (const part of s.split(/(\x1b\[[0-9;]*m)/)) {
     if (part.startsWith("\x1b[")) kept += part;
-    else if (part.length <= room) (kept += part), (room -= part.length);
+    else if (part.length <= room) ((kept += part), (room -= part.length));
     else {
       kept += part.slice(0, room);
       break;

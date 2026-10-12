@@ -32,7 +32,7 @@ describe("clipStyled", () => {
 
 describe("paint", () => {
   test("colors each marked span and resets after it", () => {
-    expect(paint("«k:const» x «s:\"y\"»")).toBe('\x1b[35mconst\x1b[0m x \x1b[32m"y"\x1b[0m');
+    expect(paint('«k:const» x «s:"y"»')).toBe('\x1b[35mconst\x1b[0m x \x1b[32m"y"\x1b[0m');
   });
 
   test("leaves unmarked text untouched", () => {
