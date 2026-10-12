@@ -8,3 +8,6 @@ node_modules/
 
 # macOS Finder metadata
 .DS_Store
+
+# Agent scratchpad — ephemeral task notes, never shared (INFRA-161)
+.agent/scratchpad.md
