@@ -74,16 +74,59 @@ Everything else is standard.
 - Weakening the review's own sandbox: `claude-review.yml` triggering on
   `pull_request`, a checkout that keeps credentials, a secret reaching a step
   that reads `pr/`, or the Claude step losing `--restricted` or `env -i`.
-- A cache step with `restore-keys` or a key not derived from `hashFiles`. The
-  runner cache is accepted for exact keys only (INFRA-203).
+- The runner cache beyond the six steps "Deliberate: do not flag" accepts
+  (INFRA-203, INFRA-207):
+  - a change that breaks one of the four conditions listed there, such as
+    `restore-keys` or a key not derived from `hashFiles`;
+  - a cache step, `path` or `key` added to or changed in a job that holds a
+    secret (a `secrets.*` value, or `github.token` passed to a step
+    explicitly). Today that is only `claude-review.yml`'s `review` job, which
+    holds `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_REVIEW_TOKEN` and `github.token`.
+    Flag it even when it meets the conditions: the fleet rule can allow it,
+    but the owner confirms each change to a secret-holding job. A change that
+    only moves the `actions/cache` pin to another commit does not count;
+  - a step outside the `review` job that restores or saves a key the `review`
+    job uses (`review-tools-…`, `ci-downloads-review-…`);
+  - a restored file unpacked, executed, installed or put on `PATH` before it
+    passes a check against a literal digest in `.forgejo/ci/install-tools.sh`
+    (`CLAUDE_TGZ_SHA256`, `CLAUDE_BIN_SHA256`, `BUN_SHA256`);
+  - a cache save that can run on `pull_request`, such as `test.yml`'s save
+    losing its `github.event_name != 'pull_request'` condition.
 
 ### Deliberate: do not flag
 
-- `actions/cache` steps in any job, including the secret-holding `review` job: the forge's runner
-  isolates cache entries written by `pull_request` runs, so a trusted run
-  cannot restore one (measured 2026-10-03). The fleet rule and its four
-  conditions are in `bkennedy/infrastructure`, `docs/house-standards.md`
-  section 7 (INFRA-203).
+- The six `actions/cache` steps this repository has, each keyed exactly on
+  `hashFiles('.forgejo/ci/install-tools.sh')` with no `restore-keys`:
+  - four in `claude-review.yml`'s `review` job, which holds secrets: a restore
+    and a save of `review-tools-…` (`/usr/local/lib/claude-code`), and a
+    restore and a save of `ci-downloads-review-…` (`/root/.cache/ci-downloads`);
+  - two in `test.yml`, which holds no secret: a restore of
+    `ci-downloads-bun-…`, and its save, which runs only when
+    `github.event_name != 'pull_request'`.
+
+  The owner accepted these under the fleet rule (`bkennedy/infrastructure`,
+  `docs/house-standards.md` section 7, INFRA-203), which this review cannot
+  read. Its conditions, as they apply here:
+  1. `claude-review.yml` triggers on `pull_request_target`, never
+     `pull_request`;
+  2. every cache key is exact and derived from `hashFiles(...)`, with no
+     `restore-keys`;
+  3. no workflow here runs code or text from an account without write access
+     (the PR's code, or a PR title, branch name, label or comment interpolated
+     into a `run:` step) on an event other than `pull_request`. `push` and
+     `workflow_dispatch`, which only a writer can start, are fine;
+  4. the forge's runner isolates cache entries written by `pull_request` runs,
+     so the `review` job cannot restore one (measured 2026-10-03). This is a
+     runner property that nothing in this repository shows; it is checked in
+     `bkennedy/infrastructure` when the runner changes, not here.
+
+  The digest checks in `install-tools.sh` catch a corrupt entry but do not
+  contain a forged one, since a restore can write anywhere in the job
+  container; condition 4 is the barrier. A cache step added to, changed in or
+  removed from a job that holds no secret is not a finding while it keeps
+  conditions 2 and 3, saves nothing on `pull_request`, and stays off the
+  `review` job's keys. Only the cache cases listed under "Flag hard" are
+  findings.
 - macOS only: `"os": ["darwin"]`, the `/Applications/Ghostty.app` default
   (`GHOSTTY_BIN` overrides it), and reloading through `osascript`.
 - The built-in picker instead of fzf (fzf's synchronous focus hook queued one
