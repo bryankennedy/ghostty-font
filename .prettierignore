@@ -16,4 +16,4 @@ bun.lock
 # canonical; change them in infrastructure and re-sync instead. Listed ahead of
 # the kit's arrival so the first `bun run format` after a sync cannot drift them.
 scripts/forgejo-review.mjs
-.forgejo/workflows/claude-review.yml
+.forgejo/workflows/argus-verdict.yml

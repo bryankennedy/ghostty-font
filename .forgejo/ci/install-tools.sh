@@ -1,6 +1,6 @@
 #!/bin/sh
 # The pinned toolchain the Claude PR review job needs
-# (.forgejo/workflows/claude-review.yml), installed into a node:22-trixie
+# (.forgejo/workflows/argus-verdict.yml), installed into a node:22-trixie
 # job container (root, Debian 13).
 #
 # The review path of this file is synced verbatim from
