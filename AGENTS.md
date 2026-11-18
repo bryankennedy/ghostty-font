@@ -11,6 +11,12 @@ dotfiles flake installs the tool on the owner's Mac from a pinned commit of it.
 Fleet policy lives in infrastructure's [docs/house-standards.md](https://git.bck.dev/bkennedy/infrastructure/src/branch/main/docs/house-standards.md);
 it is linked here, not restated.
 
+Write prose in Simplified Technical English (ASD-STE100). The rule covers each
+pull request, commit message body, review comment, Progress note and doc. It
+does not touch code, quoted text, or copy written for other readers, such as
+website text. Section 11 of the same `docs/house-standards.md` holds the rules
+and the full list of exempt work.
+
 ## Code review criteria
 
 Read on every automated PR review. Report only problems the PR introduces.
