@@ -11,7 +11,7 @@
 //   ghostty-font [search]        interactive list: type to filter by substring,
 //                                ↑↓/Tab cycle (live), Enter keeps, Esc cancels,
 //                                → marks A, → on a second font marks B and compares,
-//                                ^R ranks fonts in random duels
+//                                ^R ranks fonts in random duels, ? or F1 lists every key
 //   ghostty-font rank            straight into ranking duels
 //   ghostty-font rank reset      forget every duel (a .bak copy is kept)
 //   ghostty-font compare <font> <font>   straight into A/B compare
@@ -21,6 +21,8 @@
 //   ghostty-font current
 //   ghostty-font list [search]   ranked by rating once there are duels; rated fonts
 //                                that aren't installed come last
+//
+// NO_COLOR=1 turns off the sample's syntax colors (https://no-color.org).
 //
 // Fonts come from `ghostty +list-fonts` (monospace families Ghostty can find),
 // plus JetBrains Mono, which Ghostty embeds and so never shows up in that list,
@@ -45,7 +47,7 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadBook, nextPair, saveBook, standings, unavailable } from "../src/ranking.js";
-import { clip, clipStyled, paint } from "../src/text.js";
+import { clip, clipStyled, colorWanted, paint } from "../src/text.js";
 
 const GHOSTTY = process.env.GHOSTTY_BIN || "/Applications/Ghostty.app/Contents/MacOS/ghostty";
 const CONFIG_DIR = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "ghostty");
@@ -66,11 +68,55 @@ const USAGE = readFileSync(new URL(import.meta.url), "utf8")
   .match(/\/\/ Usage:\n([\s\S]*?)\n\/\/\n/)[1]
   .replace(/^\/\/ ?/gm, "");
 
+// The one-line hints get clipped on a narrow terminal, so each starts with the
+// key for the full list below them.
 const LIST_KEYS =
-  "type to search · ↑↓ cycle · ^R rank · → mark A/B · ← clear mark · Enter keep · Esc cancel · ^U clear";
-const COMPARE_KEYS = "Space ↑↓ Tab flip · ← a show A · → b show B · Enter keep shown · Esc back";
+  "? help · type to search · ↑↓ cycle · ^R rank · → mark A/B · ← clear mark · Enter keep · Esc cancel · ^U clear";
+const COMPARE_KEYS =
+  "? help · Space ↑↓ Tab flip · ← a show A · → b show B · Enter keep shown · Esc back · q quit";
 const RANK_KEYS =
-  "Space flip · ← a / → b show · Enter pick shown · = tie · s skip · x drop font · u undo · Esc ranked list";
+  "? help · Space flip · ← a / → b show · Enter pick shown · = tie · s skip · x drop font · u undo · Esc ranked list · q quit";
+
+// The help screen, one key per line so nothing is clipped.
+const QUIT = "put back the font you started with and quit";
+const HELP_KEY = ["?  F1", "show this help; any key closes it"];
+const HELP = {
+  list: [
+    ["type", "filter the fonts by substring"],
+    ["↑ ↓  Tab  ^P ^N", "move (wraps); the font applies once the cursor rests"],
+    ["PgUp PgDn Home End", "jump"],
+    ["→", "mark as A; → on a second font marks B and opens compare"],
+    ["←", "clear the mark"],
+    ["Backspace ^W ^U", "delete a character, a word, the whole search"],
+    ["^R", "rank fonts in random duels"],
+    ["Enter", "keep the highlighted font"],
+    ["Esc  ^C", QUIT],
+    HELP_KEY,
+  ],
+  compare: [
+    ["Space ↑ ↓ Tab", "flip between A and B"],
+    ["←  a  1", "show A"],
+    ["→  b  2", "show B"],
+    ["Enter", "keep the font on screen"],
+    ["Esc", "back to the list, the font on screen kept as A"],
+    ["q  ^C", QUIT],
+    HELP_KEY,
+  ],
+  rank: [
+    ["Space ↑ ↓ Tab", "flip between A and B"],
+    ["←  a", "show A"],
+    ["→  b", "show B"],
+    ["Enter", "the font on screen wins"],
+    ["=", "tie"],
+    ["s", "skip this pair"],
+    ["x", "drop the font on screen from ranking for good"],
+    ["u", "undo the last result and replay that pair"],
+    ["Esc", "the ranked list, cursor on your favorite"],
+    ["q  ^C", `${QUIT}; the duels stay saved`],
+    HELP_KEY,
+  ],
+};
+const HELP_KEYS = ["?", "\x1bOP", "\x1b[11~"]; // ?, F1 (xterm), F1 (vt220)
 
 const RELOAD_SCRIPT =
   'tell application "Ghostty" to perform action "reload_config" on focused terminal of selected tab of front window';
@@ -235,12 +281,13 @@ const PREVIEW = [
   "«s:$» git log --oneline -2",
   "«t:3f9c2e1» feat(rank): pair near the top once every font is calibrated (#12)",
   "«t:a07d4b8» fix(list): reset color at the clip so it can't bleed (#11)",
-].map(paint);
+].map((line) => paint(line, colorWanted(process.env)));
 
 // opts.compare: an [A, B] pair to open straight into compare mode.
 // opts.rank: open straight into ranking duels.
 function pick(initialQuery, opts = {}) {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+  // TERM=dumb is a terminal that can't move the cursor or redraw a screen.
+  if (!process.stdin.isTTY || !process.stdout.isTTY || process.env.TERM === "dumb") {
     console.error("The interactive list needs a terminal. Use `ghostty-font list` or `set`.");
     process.exit(2);
   }
@@ -268,6 +315,7 @@ function pick(initialQuery, opts = {}) {
   let lastDuel = null;
   let showing = 0; // which of the pair is on screen
   let note = ""; // one-off message on the status line
+  let help = false; // the key list covers the screen
 
   function rerank() {
     const keep = shown[cursor] ?? started;
@@ -357,7 +405,18 @@ function pick(initialQuery, opts = {}) {
     const previewLines = (room) =>
       PREVIEW.slice(0, Math.max(room, 0)).map((l) => clipStyled(l, cols));
 
-    if (mode === "list") {
+    // The row the terminal cursor sits on. Screen magnifiers and screen readers
+    // follow the cursor, so it goes to the focused font instead of being hidden.
+    let focus = 0;
+
+    if (help) {
+      const keys = HELP[mode];
+      const width = Math.max(...keys.map(([key]) => key.length));
+      lines.push(`\x1b[1mGhostty font · ${mode} keys\x1b[22m`);
+      lines.push(rule);
+      for (const [key, does] of keys) lines.push(clip(`  ${key.padEnd(width)}   ${does}`, cols));
+      lines.push("", dim("Press any key to close this help."));
+    } else if (mode === "list") {
       const preview = rows >= 16 ? previewLines(4) : [];
       const listHeight = Math.max(rows - 4 - (preview.length ? preview.length + 1 : 0), 1);
       if (cursor < scroll) scroll = cursor;
@@ -381,6 +440,7 @@ function pick(initialQuery, opts = {}) {
           );
         } else lines.push(r === 0 && !shown.length ? dim(`  No font contains "${query}"`) : "");
       }
+      focus = shown.length ? 3 + cursor - scroll : 1;
       if (preview.length) lines.push(rule, ...preview);
     } else {
       const pair = mode === "rank" ? duel : marks;
@@ -395,6 +455,7 @@ function pick(initialQuery, opts = {}) {
       lines.push(row(pair[1], showing === 1, { letter: "B" }));
       lines.push(rule);
       lines.push(...previewLines(rows - 7));
+      focus = 3 + showing;
     }
 
     // Bottom status line.
@@ -415,11 +476,18 @@ function pick(initialQuery, opts = {}) {
     else if (mode === "list" && marks[0])
       status = `A: ${marks[0]} · press → on another font to compare`;
     else if (mode === "list")
-      status = fav ? `${favText} · ^R to keep ranking` : "^R: rank fonts in random duels";
+      status = fav
+        ? `${favText} · ^R to keep ranking · ? for help`
+        : "^R: rank fonts in random duels · ? for help";
     else status = "";
     lines.push(dim(clip(status, cols)));
 
-    out("\x1b[H" + lines.map((l) => `${l}\x1b[K`).join("\r\n") + "\x1b[J");
+    // Hide the cursor while the screen redraws, so it doesn't flicker across it.
+    out(
+      "\x1b[?25l\x1b[H" +
+        lines.map((l) => `${l}\x1b[K`).join("\r\n") +
+        `\x1b[J\x1b[${Math.min(focus, rows - 1) + 1};1H\x1b[?25h`,
+    );
   }
 
   function refilter() {
@@ -598,10 +666,14 @@ function pick(initialQuery, opts = {}) {
       case "\x1b[6~":
         return move(page, false);
       case "\x1b[H":
+      case "\x1bOH":
       case "\x1b[1~":
+      case "\x1b[7~":
         return move(-cursor, false);
       case "\x1b[F":
+      case "\x1bOF":
       case "\x1b[4~":
+      case "\x1b[8~":
         return move(shown.length, false);
       case "\r":
       case "\n":
@@ -612,6 +684,9 @@ function pick(initialQuery, opts = {}) {
       case "\x7f":
       case "\b":
         query = query.slice(0, -1);
+        return refilter();
+      case "\x17": // ^W: the last word, as in a shell
+        query = query.replace(/\S+\s*$|\s+$/, "");
         return refilter();
       case "\x15":
         query = "";
@@ -633,7 +708,7 @@ function pick(initialQuery, opts = {}) {
     if (SHOW_B.includes(k) || k === "2") return show(1);
     if (k === "\r" || k === "\n") return finish(true);
     if (k === "\x1b") return backToList();
-    if (k === "\x03") return finish(false);
+    if (k === "\x03" || k === "q" || k === "Q") return finish(false);
   }
 
   function rankKey(k) {
@@ -659,6 +734,8 @@ function pick(initialQuery, opts = {}) {
       case "\x1b":
         return leaveRank();
       case "\x03":
+      case "q":
+      case "Q":
         return finish(false);
     }
   }
@@ -670,7 +747,12 @@ function pick(initialQuery, opts = {}) {
     while (s.length) {
       const key = s.match(/^\x1b(\[[0-9;]*[A-Za-z~]|O[A-Za-z])/)?.[0] ?? [...s][0];
       s = s.slice(key.length);
-      ({ list: listKey, compare: compareKey, rank: rankKey })[mode](key);
+      // No font name holds a "?", so it can open the help even while you type.
+      if (help) {
+        help = false;
+        if (key === "\x03") finish(false);
+      } else if (HELP_KEYS.includes(key)) help = true;
+      else ({ list: listKey, compare: compareKey, rank: rankKey })[mode](key);
     }
     draw();
   }
@@ -685,7 +767,7 @@ function pick(initialQuery, opts = {}) {
   // Until the first key, since Esc would put that missing font back.
   if (startWarning) note = startWarning;
 
-  out("\x1b[?1049h\x1b[?25l");
+  out("\x1b[?1049h");
   process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdin.on("data", onKeys);

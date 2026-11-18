@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { clip, clipStyled, paint, visible } from "../src/text.js";
+import { clip, clipStyled, colorWanted, paint, visible } from "../src/text.js";
 
 describe("clip", () => {
   test("leaves text that fits alone", () => {
@@ -37,5 +37,17 @@ describe("paint", () => {
 
   test("leaves unmarked text untouched", () => {
     expect(paint("plain => text")).toBe("plain => text");
+  });
+
+  test("without color, drops the colors but keeps italic comments", () => {
+    expect(paint('«k:const» x «s:"y"» «c:// z»', false)).toBe('const x "y" \x1b[3m// z\x1b[0m');
+  });
+});
+
+describe("colorWanted", () => {
+  test("follows NO_COLOR: any value but the empty string turns color off", () => {
+    expect(colorWanted({})).toBe(true);
+    expect(colorWanted({ NO_COLOR: "" })).toBe(true);
+    expect(colorWanted({ NO_COLOR: "1" })).toBe(false);
   });
 });

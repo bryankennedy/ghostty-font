@@ -59,18 +59,22 @@ of text and syntax-colored code below the list.
 | Key | Does |
 |---|---|
 | type | filter by substring |
-| ↑ ↓ Tab | move (wraps) |
+| ↑ ↓ Tab, Ctrl-P Ctrl-N | move (wraps) |
+| PgUp PgDn Home End | jump |
 | → | mark as A; → on a second font marks B and opens compare |
 | ← | clear the mark |
+| Backspace, Ctrl-W, Ctrl-U | delete a character, a word, the whole search |
 | Ctrl-R | start ranking |
 | Enter | keep the highlighted font |
-| Esc | put back the font you started with |
+| Esc, Ctrl-C | put back the font you started with |
+| `?`, F1 | list every key; any key closes the list |
 
 ### Compare
 
 Just the two marked fonts. Space, Tab or ↑↓ flip between them; ← or `a` shows
 A, → or `b` shows B. Enter keeps the one on screen. Esc returns to the list
-with that font still marked as A, so the next → sets up its challenger.
+with that font still marked as A, so the next → sets up its challenger. `q`
+puts back the font you started with and quits, and `?` lists every key.
 
 ### Rank
 
@@ -88,6 +92,8 @@ status line tells you your favorite so far.
 | `x` | drop the font on screen from ranking for good |
 | `u` | undo the last result and replay that pair |
 | Esc | the ranked list, cursor on your favorite |
+| `q` | put back the font you started with and quit; the duels stay saved |
+| `?`, F1 | list every key |
 
 **How it ranks.** Every font starts at 1500 and each duel moves the two ratings
 by up to 32 points (standard Elo), more for an upset. Pairs aren't uniformly
@@ -97,6 +103,17 @@ rating. That spends your duels on the question you care about — which font is
 first. In simulation (31 fonts, picks that agree with a hidden order 90% of the
 time) the true favorite was ranked first after 90 duels 60% of the time, and
 after 180 duels 83%. Dropping fonts you clearly dislike gets there sooner.
+
+### Accessibility
+
+- The terminal cursor stays on the focused font, so a screen magnifier or a
+  screen reader that follows the cursor follows the list.
+- The focused row carries a `▸` and reverse video, and marks carry the letters
+  A and B, so nothing depends on color alone.
+- `NO_COLOR=1` ([no-color.org](https://no-color.org)) turns off the syntax
+  colors in the sample. Comments keep their italics.
+- The key hints get clipped on a narrow terminal. `?` or F1 shows every key,
+  one per line.
 
 ### Fonts that go missing
 

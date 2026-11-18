@@ -38,5 +38,15 @@ export const SYNTAX = {
   c: "3;90", // comment: italic and muted, where fonts differ most
 };
 
-export const paint = (line) =>
-  line.replace(/«(\w):(.*?)»/g, (_, kind, text) => `\x1b[${SYNTAX[kind]}m${text}\x1b[0m`);
+// Without color (NO_COLOR, https://no-color.org), comments keep their italics:
+// italic shapes are a style, not a color, and they are part of what you compare.
+const PLAIN = { c: "3" };
+
+export const paint = (line, color = true) =>
+  line.replace(/«(\w):(.*?)»/g, (_, kind, text) => {
+    const sgr = color ? SYNTAX[kind] : PLAIN[kind];
+    return sgr ? `\x1b[${sgr}m${text}\x1b[0m` : text;
+  });
+
+// NO_COLOR turns color off when it is set to any value but the empty string.
+export const colorWanted = (env) => !env.NO_COLOR;
