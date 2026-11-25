@@ -140,3 +140,10 @@ config's font.
 ```sh
 bun test
 ```
+
+## Pull requests
+
+The forge reviews each pull request. A pull request that changes only this
+file or the tests can merge with no approval, when its review is clean and
+`bun test` is green. Each change to the code waits for the owner: the tool
+runs on the owner's Mac. `.forgejo/CODEOWNERS` lists the paths.
