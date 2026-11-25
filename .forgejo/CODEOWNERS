@@ -1,5 +1,59 @@
-# Scaffolded by bkennedy/infrastructure scripts/forgejo-review-sync.mjs and
-# never overwritten by it: replace this catch-all with an itemised
-# high-blast-radius list when this repository grows one. Each rule is a Go
-# regular expression over the repo-relative path, followed by owners.
-^.*$   @bkennedy
+# High-blast-radius paths. A pull request that touches one requests the
+# owner's review, and branch protection on main ("Block merge on official
+# review requests") holds the merge until that review lands. The review gate
+# sends at least these paths to the human lane (review/lanes.yml in
+# bkennedy/infrastructure). A pull request that touches no path here, and
+# no other path that the gate holds, can merge with no approval when its
+# review is clean and its tests pass (INFRA-292).
+#
+# Each rule is a Go regular expression over the repo-relative path, followed
+# by owners. Forgejo never requests a review from a pull request's own
+# author, so this gates the pull requests of the agent accounts.
+#
+# Keep three lists in step: this file, the "High" list in AGENTS.md, and the
+# rules for ghostty-font in review/lanes.yml. Each path here must also be a
+# path that the gate holds. Change them together.
+#
+# test/ is not here on purpose. A rule here matches a path, not a change, so
+# it would also hold each new test. The gate reads the diff: it holds a
+# deleted test file, a skipped test, a removed assertion and an exit in a
+# test file. A weaker assertion in place is for the review to find (the
+# "Tests" paragraph in AGENTS.md).
+
+# CI and the review kit. test.yml gives the required check on main, and the
+# review workflow and its script come from the base branch, so a change here
+# changes how each later pull request is tested and reviewed.
+^\.forgejo/.*$                    @bkennedy
+^scripts/forgejo-review\.mjs$     @bkennedy
+
+# Agent instructions. AGENTS.md holds the review criteria.
+^AGENTS\.md$                      @bkennedy
+^CLAUDE\.md$                      @bkennedy
+^\.claude/.*$                     @bkennedy
+^\.agent/.*$                      @bkennedy
+
+# What `bun install` puts on the machine: the bin entry, the files list, the
+# dependencies and the lifecycle scripts. bunfig.toml and .npmrc do not exist
+# today. Either one can point the install at another registry, so a pull
+# request that adds one is a reviewed change. The rc rule below holds .npmrc.
+^package\.json$                   @bkennedy
+^bun\.lock$                       @bkennedy
+^bunfig\.toml$                    @bkennedy
+
+# All of the tool's code. It runs on the owner's Mac as the owner:
+# bin/ghostty-font writes and restores the user's files and starts
+# processes, and it imports from src/. The dotfiles pin bump that takes a
+# new commit to the Mac shows a commit id, not the code. So the owner checks
+# the code here.
+^bin/.*$                          @bkennedy
+^src/.*$                          @bkennedy
+
+# Files that a tool finds by name and loads: a config file, an rc file, an
+# env file. Also .gitattributes, which decides what a review diff can show,
+# and editor settings, whose tasks run on the machine that opens them. The
+# gate holds the same names in each repository.
+^(.*/)?[^/]+\.config\.[^/]+$      @bkennedy
+^(.*/)?\.[^/]+rc(\.[^/]+)?$       @bkennedy
+^(.*/)?\.env[^/]*$                @bkennedy
+^(.*/)?\.gitattributes$           @bkennedy
+^(.*/)?\.(zed|vscode|idea|devcontainer)/.*$  @bkennedy

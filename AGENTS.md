@@ -23,11 +23,19 @@ Read on every automated PR review. Report only problems the PR introduces.
 
 ### Blast radius
 
-`.forgejo/CODEOWNERS` puts every path behind the owner's approval, so "high"
-here does not decide who signs off. It marks the changes where a mistake writes
-to the user's files, runs a command, or changes how this review works.
+`.forgejo/CODEOWNERS` and the review gate send each path in the High list to
+the owner. A pull request that touches no such path can merge with no approval
+when this review is clean and the tests pass (INFRA-292). So "high" decides
+who signs off. It marks the changes where a mistake writes to the user's
+files, runs a command, or changes how this review works.
 
-**High: say so at the top of the review.**
+All of `bin/` and `src/` goes to the owner, also a change that this list
+rates lower. The code runs on the owner's Mac as the owner, and the dotfiles
+pin bump that takes a new commit there shows a commit id, not the code. A
+pull request that changes only `README.md`, the tests or the docs can merge
+with no approval.
+
+**High: needs the owner's sign-off (`.forgejo/CODEOWNERS`). Say so at the top of the review.**
 
 - Writing and restoring the user's files, in `bin/ghostty-font`:
   `writeOverride`, `restore`, `finish`, the signal, stdin-end and `exit`
@@ -38,10 +46,23 @@ to the user's files, runs a command, or changes how this review works.
   dropped }`) or the font names it is keyed by.
 - Spawning processes: `run`, `spawn`, `familyLines` and `RELOAD_SCRIPT`.
 - `package.json` fields that change what `bun install -g` puts on the machine:
-  `bin`, `files`, `private`, `dependencies`, any lifecycle script.
+  `bin`, `files`, `private`, `dependencies`, any lifecycle script. Also
+  `bun.lock`, and a new `bunfig.toml` or `.npmrc`.
 - The review and CI setup itself: `.forgejo/` (including
   `.forgejo/workflows/test.yml`, whose `test / *` is the required check on
-  `main`), `scripts/forgejo-review.mjs`, and this file.
+  `main`), `scripts/forgejo-review.mjs`, this file, `CLAUDE.md` (its
+  pointer), `.claude/` and `.agent/`.
+- A file that a tool finds by name: a `*.config.*` file, an rc file such as
+  `.prettierrc`, an env file, `.gitattributes` (it decides what this review's
+  diff shows), and editor settings such as `.zed/` or `.vscode/`.
+
+**Tests.** `test/` has no CODEOWNERS rule on purpose: a pull request that
+adds or changes a test can merge with no approval. The review gate holds the
+test changes that it can see in the diff: a deleted test file, a skipped
+test, a removed assertion, and an exit in a test file. The gate cannot see
+an assertion that was made weaker in place, such as `toThrow` changed to
+`not.toThrow`. Report that as a finding of `medium` or more. A finding at
+that level also sends the pull request to the owner.
 
 **Low:** `README.md`, `src/text.js`, and the display-only strings in
 `bin/ghostty-font` (`PREVIEW`, the key-help lines, status text).
